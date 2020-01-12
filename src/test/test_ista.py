@@ -22,7 +22,5 @@ def test_login_ok():
     out = ista.login_ista()
     assert out is True
     data = ista.get_readings()
-    assert data.shape[1] == 15
-    values = ista.clean_data(data)
-    assert values.value.mean() > 0
-    assert values.date.max() == pd.Timestamp('2020-01-08 00:00:00')
+    assert data.value.mean() > 0
+    assert data.date.max() == pd.Timestamp('2020-01-08 00:00:00')
