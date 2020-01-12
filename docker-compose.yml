@@ -1,0 +1,14 @@
+version: '3.1'
+
+services:
+
+  db:
+    #image: arm32v7/postgres:11.1
+    image: postgres:11-alpine
+    environment:
+      POSTGRES_PASSWORD: passwdb
+      POSTGRES_USER: userdb 
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./res/db:/docker-entrypoint-initdb.d

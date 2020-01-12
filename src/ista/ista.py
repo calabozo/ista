@@ -2,9 +2,8 @@
 import requests
 import logging
 import pandas as pd
+from datetime import date
 
-#https://oficina.ista.es/GesCon/GestionFincas.do?d-4360165-e=2&metodo=listadoLecturasRadio&metodo=preCargaLecturasRadio&metodo=listadoLecturasRadio&6578706f7274=1
-#https://oficina.ista.es/GesCon/GestionFincas.do?d-4360165-e=2&metodo=listadoLecturasRadio&metodo=preCargaLecturasRadio&metodo=listadoLecturasRadio&6578706f7274=1
 def checkrequest(func):
     def wrapper(*args, **kwargs):
         try:
@@ -27,51 +26,66 @@ def checkrequest(func):
             return None
 
         return r
-
     return wrapper
 
-def login_ista(user,password):
+class Ista(object):
+    def __init__(self,user,password):
+        self.user = user
+        self.password = password
+        self.session = requests.Session()
+        self.host = 'oficina.ista.es'
+        self.url_main = f"https://{self.host}/GesCon/MainPageAbo.do"
+        self.headers = {'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                   'Accept-Language':'es-ES,es;q=0.8,en-US;q=0.5,en;q=0.3',
+                   'Accept-Encoding': 'gzip,deflate,br',
+                   'User-Agent':'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:71.0) Gecko/20100101 Firefox/71.0',
+                   'Content-Type':"application/x-www-form-urlencoded",
+                   'Origin':f'https://{self.host}',
+                   'Referer':self.url_main}
 
-    session = requests.Session()
+    def login_ista(self):
 
-    host='oficina.ista.es'
-    url_main = f"https://{host}/GesCon/MainPageAbo.do"
-    headers = {'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-               'Accept-Language':'es-ES,es;q=0.8,en-US;q=0.5,en;q=0.3',
-               'Accept-Encoding': 'gzip,deflate,br',
-               'User-Agent':'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:71.0) Gecko/20100101 Firefox/71.0',
-               'Content-Type':"application/x-www-form-urlencoded",
-               'Origin':f'https://{host}',
-     #          'Upgrade-Insecure-Requests':'1',
-     #          'DNT':'1',
-               'Referer':url_main}
-    r = checkrequest(session.get)(url_main, headers=headers, verify=False)
+        r = checkrequest(self.session.get)(self.url_main, headers=self.headers, verify=False)
+        if r is None:
+            return False
 
+        url = f"https://{self.host}/GesCon/GestionOficinaVirtual.do"
+        r = checkrequest(self.session.post)(f'{url};jsessionid={self.session.cookies.get("JSESSIONID")}',
+                             headers=self.headers,
+                             data={'metodo': 'loginAbonado', 'loginName': self.user, 'password': self.password},
+                             verify=True)
+        if r is None:
+            return False
 
-    url = f"https://{host}/GesCon/GestionOficinaVirtual.do"
-    r = checkrequest(session.post)(f'{url};jsessionid={session.cookies.get("JSESSIONID")}',
-                         headers=headers,
-                         data={'metodo': 'loginAbonado', 'loginName': user, 'password': password},
-                         verify=True)
+        if r.text.find("Mis recibos")>0:
+            return True
+        else:
+            return False
 
-    if r.text.find("Mis recibos")>0:
-        return session
-    else:
-        return None
+    def get_readings(self):
+        headers = {'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                   'Accept-Language': 'es-ES,es;q=0.8,en-US;q=0.5,en;q=0.3',
+                   'Accept-Encoding': 'gzip,deflate,br',
+                   'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:71.0) Gecko/20100101 Firefox/71.0',
+                   'Content-Type': "application/x-www-form-urlencoded",
+                   'Origin': f'https://{self.host}'}
+        url_readings='https://oficina.ista.es/GesCon/GestionFincas.do?metodo=preCargaLecturasRadio'
+        r = checkrequest(self.session.get)(url_readings, headers=headers, verify=False)
+        if r is not None and r.text.find("Acceso a la Oficina Virtual")<0:
+            tables = pd.read_html(r.text)
+            consumption = tables[1]
+            return consumption
+        else:
+            return None
 
-def get_readings(session):
-    host = 'oficina.ista.es'
-    url_readings='https://oficina.ista.es/GesCon/GestionFincas.do?metodo=preCargaLecturasRadio'
-    headers = {'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-               'Accept-Language': 'es-ES,es;q=0.8,en-US;q=0.5,en;q=0.3',
-               'Accept-Encoding': 'gzip,deflate,br',
-               'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:71.0) Gecko/20100101 Firefox/71.0',
-               'Content-Type': "application/x-www-form-urlencoded",
-               'Origin': f'https://{host}'}
-    r = checkrequest(session.get)(url_readings, headers=headers, verify=False)
-    tables = pd.read_html(r.text)
-    consumption  = tables[1]
-    print(r.text)
-
-
-
+    def clean_data(self,data):
+        cols = data.columns
+        col_serie = cols[2]
+        cols_values = cols[4:]
+        values = pd.melt(data, id_vars=[col_serie], value_vars=cols_values)
+        values["date_str"] = values.variable+f"/{date.today().year}"
+        values["date"] = pd.to_datetime(values["date_str"],format="%d/%m/%Y")
+        idx=values.date - pd.Timestamp.now() > pd.Timedelta(value="0")
+        values.date[idx] = values.date[idx]-pd.DateOffset(years=1)
+        values = values.rename(columns={'Nº serie':'serial'})[['serial','date','value']]
+        return values
